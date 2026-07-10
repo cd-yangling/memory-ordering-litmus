@@ -1,0 +1,19 @@
+# build artifacts
+*.o
+*.a
+sb_tso_relaxed
+sb_tso_mb
+mp_rmo_none
+mp_rmo_wmb
+mp_rmo_rmb
+mp_rmo_both
+spsc_rmo_none
+spsc_rmo_wmb
+spsc_rmo_rmb
+spsc_rmo_both
+selftest_barriers
+arm32-bin/
+
+# editor
+*~
+.*.swp
