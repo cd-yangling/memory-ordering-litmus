@@ -106,7 +106,7 @@ ARMv7 是 RMO。store-store 在 reset 结构下不可观测(store buffer FIFO + 
 
 | 原语 | x86 | arm64 | armv7 |
 |---|---|---|---|
-| smp_mb | mfence | dmb ish | dmb ish |
+| smp_mb | lock addl | dmb ish | dmb ish |
 | smp_rmb | barrier() | dmb ishld | dmb ish |
 | smp_wmb | barrier() | dmb ishst | dmb ishst |
 | CACHE_LINE_SIZE | 64 | 128 | 64 |
