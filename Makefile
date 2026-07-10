@@ -18,7 +18,8 @@ HDRS := barriers/barriers.h barriers/arch-x86.h barriers/arch-arm64.h barriers/a
 TSO_BINS := sb_tso_relaxed sb_tso_mb
 RMO_BINS := mp_rmo_none mp_rmo_wmb mp_rmo_rmb mp_rmo_both
 SPSC_BINS := spsc_rmo_none spsc_rmo_wmb spsc_rmo_rmb spsc_rmo_both
-BINS := $(TSO_BINS) $(RMO_BINS) $(SPSC_BINS)
+PETERSON_BINS := peterson_none peterson_mb_both
+BINS := $(TSO_BINS) $(RMO_BINS) $(SPSC_BINS) $(PETERSON_BINS)
 
 all: $(BINS) selftest_barriers
 
@@ -55,6 +56,13 @@ spsc_rmo_rmb: spsc_rmo.c $(HDRS)
 spsc_rmo_both: spsc_rmo.c $(HDRS)
 	$(CC) $(CFLAGS) -DUSE_WMB=1 -DUSE_RMB=1 -Ibarriers -o $@ spsc_rmo.c $(LDLIBS)
 
+# --- Peterson lock correctness (2 barrier variants: none/mb_both) ---
+peterson_none: peterson.c $(HDRS)
+	$(CC) $(CFLAGS) -DUSE_MB=0 -Ibarriers -o $@ peterson.c $(LDLIBS)
+
+peterson_mb_both: peterson.c $(HDRS)
+	$(CC) $(CFLAGS) -DUSE_MB=1 -Ibarriers -o $@ peterson.c $(LDLIBS)
+
 selftest_barriers: selftest_barriers.c $(HDRS)
 	$(CC) $(CFLAGS) -Ibarriers -o $@ selftest_barriers.c
 
@@ -76,7 +84,12 @@ run-spsc: $(SPSC_BINS)
 check-spsc: selftest_barriers $(SPSC_BINS)
 	./selftest_barriers && ./run_spsc.sh $(N)
 
+run-peterson: $(PETERSON_BINS)
+	@for V in none mb_both; do \
+	  echo "=== $$V ===" && ./peterson_$$V $(N); \
+	done
+
 clean:
 	rm -f $(BINS) selftest_barriers
 
-.PHONY: all run check run-rmo check-rmo run-spsc check-spsc clean
+.PHONY: all run check run-rmo check-rmo run-spsc check-spsc run-peterson clean

@@ -13,6 +13,8 @@ spsc_rmo_rmb
 spsc_rmo_both
 selftest_barriers
 arm32-bin/
+peterson_none
+peterson_mb_both
 
 # editor
 *~

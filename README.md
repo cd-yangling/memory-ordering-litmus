@@ -2,11 +2,12 @@
 
 用 pthreads 实现的内存序 litmus 测试,在 x86(TSO)和 ARMv7(Cortex-A9,RMO)上跑同一份代码,观察硬件内存重排并用屏障消除。`barriers/` 是 arch 抽象层,x86_64/aarch64/armv7 各一个头文件。
 
-三个测试:
+四个测试:
 
 - `sb_tso.c` — Store-Buffering,TSO 的 store-load 重排,smp_mb 消除
 - `mp_rmo.c` — Message-Passing,4 屏障组合(wmb×rmb),store-store + load-load
 - `spsc_rmo.c` — SPSC 环形队列,持续循环 MP,P 端测 wmb / C 端测 rmb
+- `peterson.c` — Peterson 互斥锁正确性,none/mb_both 两个变体
 
 ## 构建
 
@@ -14,6 +15,7 @@
     make run        # SB
     make run-rmo    # MP 4 组合
     make run-spsc   # SPSC 4 组合
+    make run-peterson  # Peterson 2 变体
 
 按 `uname -m` 自动选 arch(x86_64 / aarch64)。armv7 需交叉编译,见下文。
 
@@ -88,6 +90,40 @@ ARMv7 样例(10M):
     both              0/10000000 0.000000%   Never (hard invariant)
 
 SPSC 比 mp_rmo 单发放大 load-load ~200x(0.00025% → 0.054%);多槽结构(head write-hit / data write-miss)还浮现了 store-store(rmb=217),这是 mp_rmo reset 基线抓不到的。
+
+## 4. Peterson Lock Correctness
+
+Peterson 算法作为纯用户态互斥锁,正确性依赖内存序屏障。
+
+    P0: flag[0]=1; turn=1; [mb?] while(flag[1]&&turn==1); count++; [mb?] flag[0]=0;
+    P1: flag[1]=1; turn=0; [mb?] while(flag[0]&&turn==0); count++; [mb?] flag[1]=0;
+
+两线程各循环 N 次,临界区 count++,预期 count=2N。
+
+| 变体 | 屏障 | 预期 |
+|------|------|------|
+| none | 无 | count<2N (Peterson 失效,store-load 重排) |
+| mb_both | 进入+退出 smp_mb | count==2N (正确) |
+
+    make run-peterson
+
+x86_64 样例(100K):
+
+    N = 100000   arch = x86_64
+    variant      count/expected       rate   verdict
+    none           199996/200000 0.000020%   FAIL
+    mb_both        200000/200000 0.000000%   PASS
+
+x86(TSO)上 none 也偶发失效(Peterson 需要 store-load 有序,TSO 仅部分保证)。
+
+ARMv7 样例(10M):
+
+    N = 10000000   arch = armv7l
+    variant      count/expected       rate   verdict
+    none           19999551/20000000 0.000022%   FAIL
+    mb_both        20000000/20000000 0.000000%   PASS
+
+ARMv7(RMO)上 none 大量失效(store-load 重排),mb_both 正确。
 
 ## ARMv7(Cortex-A9)内存模型
 
