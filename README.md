@@ -1,6 +1,6 @@
 # Memory Ordering Litmus Tests
 
-用 pthreads 实现的内存序 litmus 测试,在 x86(TSO)和 ARMv7(Cortex-A9,RMO)上跑同一份代码,观察硬件内存重排并用屏障消除。`barriers/` 是 arch 抽象层,x86_64/aarch64/armv7 各一个头文件。
+用 pthreads 实现的内存序 litmus 测试,在 x86(TSO)、ARMv7(Cortex-A9,RMO)和 aarch64(Cortex-A72,RMO)上跑同一份代码,观察硬件内存重排并用屏障消除。`barriers/` 是 arch 抽象层,x86_64/aarch64/armv7 各一个头文件。
 
 四个测试:
 
@@ -91,6 +91,36 @@ ARMv7 样例(10M):
 
 SPSC 比 mp_rmo 单发放大 load-load ~200x(0.00025% → 0.054%);多槽结构(head write-hit / data write-miss)还浮现了 store-store(rmb=217),这是 mp_rmo reset 基线抓不到的。
 
+### aarch64(Cortex-A72)
+
+> **运行环境**:数据取自 ARM 宿主上的 **KVM 透传 VM**,非裸机。KVM 不模拟内存模型(客核直接跑真 A72 硅片,仅特权指令 trap),故**重排结论与裸机等价、可靠**(load-load 易漏、store-store 罕见但存在、`both`=0)。但 vCPU 调度抖动会影响 P/C 耦合,**绝对计数率与方差不等于裸机** —— 百分比按数量级/定性理解即可,勿当基准精读。
+
+在 Cortex-A72(part `0xd08`,`r0p2`)上,SPSC 呈现与 A9 明显不同的画面。下面两组样例分别取自一次 1e7 和一次 1e8 运行:
+
+    N = 10000000   arch = aarch64
+    variant   d[tail]!=tail       rate   verdict
+    none         146273/10000000 1.462730%   Sometimes (C-side load-load leak)
+    wmb           33005/10000000 0.330050%   Sometimes (C-side load-load leak)
+    rmb               0/10000000 0.000000%   WARNING: 0 (v7 store-store FIFO unobservable)
+    both              0/10000000 0.000000%   Never (hard invariant)
+
+    N = 100000000   arch = aarch64
+    variant   d[tail]!=tail         rate   verdict
+    none            380/100000000 0.000380%   Sometimes (C-side load-load leak)
+    wmb            7997/100000000 0.007997%   Sometimes (C-side load-load leak)
+    rmb             343/100000000 0.000343%   Sometimes (P-side store-store leak)
+    both              0/100000000 0.000000%   Never (hard invariant)
+
+- **load-load 易观测**:`none`/`wmb` 在 1e7 必漏,单轮最高 **1.46%** —— 确认 aarch64 对 load-load 是 RMO。`wmb` 只封 P 端 store-store、不封 C 端 load-load,所以照样漏(正确行为,不是 bug)。
+- **`wmb` 的违规数常高于 `none`(1e8:4334~7997 vs 0~380),不是 bug**:`both`=0 已证明 wmb 的 store-store 排序正确,`wmb` 变体漏的全是 C 端 load-load(只有 rmb 能封)。而 A72 上 store-store 本就罕见(见下条),`none` 的违规也几乎全是 load-load —— **两者同源**。差别纯是**时序耦合**:`dmb ishst` 拖慢生产者 → P/C 贴得更紧 → 消费者更频繁撞上「`data[tail]` 投机读」对「生产者本次写失效传播」的竞速窗口;`none` 全速的生产者甩开消费者 ~1024 槽,消费者读到的都是久已稳定的槽,撞不上窗口。屏障改的是吞吐/耦合,不是语义;KVM 的 vCPU 调度抖动进一步放大了这个效应(也解释了下文方差)。
+- **store-store 在 1e7 不可观测**:`rmb` 变体是 P 端 store-store 的探针(已用 rmb 封住 load-load,剩下的只能是 store-store),7 轮 1e7 **全为 0**。对比 Cortex-A9 在 1e7 即 217 次(2.17e-4),A72 难浮现约一个量级。
+- **但拉到 1e8 就漏了**(见上 1e8 表 `rmb`=343):4 轮 1e8 的 `rmb` 分别 **35 / 0 / 0 / 343**(~1e-7 ~ 1e-6)。结论:A72 的 store buffer「更接近 FIFO」却**非严格 FIFO**,store-store 重排依然存在 —— 这就是 aarch64 仍需 `smp_wmb` 的实测依据(破除「ARMv8 store-store 安全」的错觉)。
+- **硬不变量成立**:`both` 全部 **11 轮**(7×1e7 + 4×1e8)为 0。
+- **方差极大**:同一 `none`/1e7 配置 7 轮绝对计数从 **38 到 146273**(率差 ~4000x),1e8 甚至出现过 `none`=0。弱内存「漏报率」高度依赖线程调度时序,单轮结果几乎无意义,需大 N + 多轮才可信。
+- `rmb` 的 WARNING 文案(`v7 store-store FIFO unobservable`)是 `run_spsc.sh` 里基于 v7 的启发式,aarch64 上照样触发,但措辞对 A72 不准确(应是「N 不够大」而非「v7 FIFO」)。
+
+> **VM 判定依据**:`cpuinfo` 透出真实核型号 Cortex-A72,但 `BogoMIPS: 100.00`、`Socket(s): 4`(各 1 核)、`L3: 128MiB`(A72 无此规模 L3)均指向 ARM 宿主上的 KVM 透传 VM;4 vCPU 各自独立核(非 SMT),P/C 分别 pin 到 cpu0/cpu1,观测条件成立。
+
 ## 4. Peterson Lock Correctness
 
 Peterson 算法作为纯用户态互斥锁,正确性依赖内存序屏障。
@@ -137,6 +167,17 @@ ARMv7(RMO)上 none 大量失效(store-load 重排),mb_both 正确。
 | load-store | 理论允许 | 未构造 litmus |
 
 ARMv7 是 RMO。store-store 在 reset 结构下不可观测(store buffer FIFO + cache 热),需 SPSC 多槽或 SS_PRIME 预热制造 head/data 可见性差异才浮现。wmb 封 store-store、rmb 封 load-load、mb 封 store-load,`both`(wmb+rmb)是语义硬不变量。
+
+## aarch64(Cortex-A72)内存模型
+
+| reorder | 状态 | 来源 |
+|---|---|---|
+| store-load | 预期可重排 | 本轮未在 A72 跑 sb_tso |
+| store-store | 实测(罕见) | spsc `rmb` @1e8:35 / 343 per 1e8 |
+| load-load | 实测(易) | spsc `none`/`wmb`,单轮最高 1.46% |
+| load-store | 理论允许 | 未构造 litmus |
+
+Cortex-A72 仍是 RMO,但 store-store 比 Cortex-A9 难观测约一个量级(需 ~1e8、~1e-7~1e-6 才浮现):store buffer 更接近 FIFO,却**非严格 FIFO** —— aarch64 仍需 `smp_wmb` 的实证。load-load 则一如既往地易漏,`rmb`/`smp_rmb` 必需。`both`(wmb+rmb)语义硬不变量在 A72 上 11 轮全 0。
 
 ## barriers 抽象层
 
