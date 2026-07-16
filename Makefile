@@ -1,16 +1,13 @@
 # Makefile for the memory-ordering litmus tests (TSO/SB, RMO/MP, RMO/SPSC).
-CC      ?= gcc
-CFLAGS  ?= -O2 -g -Wall -Wextra
-LDLIBS  ?= -lpthread
-N       ?= 10000000
+CROSS_COMPILE ?=
+CC            := $(CROSS_COMPILE)gcc
+CFLAGS        ?= -O2 -g -Wall -Wextra
+LDLIBS        ?= -lpthread
+N             ?= 10000000
 
-ARCH := $(shell uname -m)
-ifeq ($(ARCH),x86_64)
-  ARCHTAG := x86_64
-else ifeq ($(ARCH),aarch64)
-  ARCHTAG := aarch64
-else
-  $(error unsupported arch: $(ARCH) (need x86_64 or aarch64))
+# If ARCH is specified by the user (e.g. ARCH=armv8-a), pass it directly to GCC via -march
+ifneq ($(ARCH),)
+  CFLAGS += -march=$(ARCH)
 endif
 
 HDRS := barriers/barriers.h barriers/arch-x86.h barriers/arch-arm64.h barriers/arch-arm32.h
@@ -20,6 +17,7 @@ RMO_BINS := mp_rmo_none mp_rmo_wmb mp_rmo_rmb mp_rmo_both
 SPSC_BINS := spsc_rmo_none spsc_rmo_wmb spsc_rmo_rmb spsc_rmo_both
 PETERSON_BINS := peterson_none peterson_mb_both
 BINS := $(TSO_BINS) $(RMO_BINS) $(SPSC_BINS) $(PETERSON_BINS)
+SCRIPTS := run_tso.sh run_rmo.sh run_spsc.sh run_peterson.sh
 
 all: $(BINS) selftest_barriers
 
@@ -89,7 +87,17 @@ run-peterson: $(PETERSON_BINS)
 	  echo "=== $$V ===" && ./peterson_$$V $(N); \
 	done
 
+# Packaging command to collect binaries and scripts for deployment
+pack: all
+ifeq ($(OUTPUT),)
+	$(error Please specify the OUTPUT variable. Example: make pack OUTPUT=armbin32)
+endif
+	mkdir -p $(OUTPUT)
+	cp $(BINS) selftest_barriers $(SCRIPTS) $(OUTPUT)/
+	chmod +x $(OUTPUT)/*.sh
+	@echo "Successfully packaged everything to $(OUTPUT)/"
+
 clean:
 	rm -f $(BINS) selftest_barriers
 
-.PHONY: all run check run-rmo check-rmo run-spsc check-spsc run-peterson clean
+.PHONY: all run check run-rmo check-rmo run-spsc check-spsc run-peterson pack clean

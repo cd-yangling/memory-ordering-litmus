@@ -15,11 +15,14 @@
 #define barrier() __asm__ __volatile__("" : : : "memory")
 
 /*
- * ARMv7-A inner-shareable barriers. NOTE: 'dmb ishld' is ARMv8-only, so
- * smp_rmb() uses the full 'dmb ish' here (slightly stronger, still correct).
+ * ARMv7-A/ARMv8-A inner-shareable barriers. NOTE: 'dmb ishld' is ARMv8-only.
  */
 #define smp_mb()  __asm__ __volatile__("dmb ish" : : : "memory")
+#if defined(__ARM_ARCH) && __ARM_ARCH >= 8
+#define smp_rmb() __asm__ __volatile__("dmb ishld" : : : "memory")
+#else
 #define smp_rmb() __asm__ __volatile__("dmb ish" : : : "memory")
+#endif
 #define smp_wmb() __asm__ __volatile__("dmb ishst" : : : "memory")
 
 /* ARMv7 ldrex/strex atomics imply no ordering; need explicit barriers. */

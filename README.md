@@ -190,16 +190,41 @@ Cortex-A72 仍是 RMO,但 store-store 比 Cortex-A9 难观测约一个量级(需
 
 armv7 没有 `dmb ishld`(ARMv8 才有),smp_rmb 退用 `dmb ish`(稍强,正确)。
 
-## 交叉编译(ARMv7)
+## 交叉编译
 
-    GCC=<arm-linux-musleabi-gcc 路径>
-    for V in none wmb rmb both; do
-      case $V in none) W=0 R=0;; wmb) W=1 R=0;; rmb) W=0 R=1;; both) W=1 R=1;; esac
-      "$GCC" -static -O2 -Ibarriers -march=armv7-a -mfloat-abi=soft -marm -mno-unaligned-access \
-        -DUSE_WMB=$W -DUSE_RMB=$R -o mp_rmo_$V mp_rmo.c -lpthread
-    done
+[Makefile](Makefile) 已经支持了交叉编译和一键打包功能，不需要手动编写编译循环。
 
-设备需 ≥2 核 SMP 才能观测硬件重排。
+### 1. 编译并打包至目标目录
+
+使用 `CROSS_COMPILE` 参数指定交叉编译器前缀，使用 `ARCH` 指定目标架构，使用 `pack OUTPUT=<目录名>` 将编译物与运行脚本自动打包：
+
+* **针对普通的 ARMv7-A (32位) 设备**：
+  ```bash
+  make CROSS_COMPILE=arm-linux-gnueabihf- ARCH=armv7-a clean pack OUTPUT=armbin32
+  ```
+  *(注：该模式下将采用 `dmb ish` 作为读屏障。)*
+
+* **针对 ARMv8 架构但运行 32 位用户态的设备（测试 `dmb ishld`）**：
+  如果您的目标硬件是 ARMv8，且操作系统/内核是 64 位（但用户空间为 32 位），您可以通过指定 `ARCH=armv8-a` 来启用 ARMv8 专有的 `dmb ishld`（Inner Shareable Load-Load/Load-Store）屏障进行测试：
+  ```bash
+  make CROSS_COMPILE=arm-linux-gnueabihf- ARCH=armv8-a clean pack OUTPUT=armbin32
+  ```
+
+* **使用交叉编译器默认架构（不指定 `ARCH` 参数）**：
+  如果您不需要显式指定架构微调（例如仅想使用该交叉编译器默认生成的 CPU 目标），可以不传递 `ARCH` 参数：
+  ```bash
+  make CROSS_COMPILE=arm-linux-gnueabihf- clean pack OUTPUT=armbin32
+  ```
+
+### 2. 拷贝至目标机并运行
+
+打包完成后，只需将生成的 `OUTPUT` 目录（例如 `armbin32`）直接拷贝到真机上，进入目录后执行相应的测试脚本即可：
+```bash
+cd armbin32/
+./run_spsc.sh
+```
+
+> **注意**：设备需要至少为 2 核（SMP）才能观测到硬件内存重排行为。
 
 ## 参考资料
 
